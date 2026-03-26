@@ -63,7 +63,7 @@ read_progress_field() {
 update_progress() {
     local p="$PROJECT_DIR/$PROGRESS_FILE" ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; local t; t="$(read_progress_field total_blocks_run)"; t="${t:-0}"; t=$((t+1))
     local summary; summary="$(echo "$4" | head -1 | sed 's/"/\\"/g')"
-    printf '{\n  "current_phase": %s,\n  "current_block": %s,\n  "total_blocks_run": %s,\n  "status": "%s",\n  "last_run": "%s",\n  "last_summary": "%s"\n}\n' \
+    printf '{\n  "current_phase": "%s",\n  "current_block": "%s",\n  "total_blocks_run": %s,\n  "status": "%s",\n  "last_run": "%s",\n  "last_summary": "%s"\n}\n' \
         "$1" "$2" "$t" "$3" "$ts" "$summary" > "$p"
 }
 
@@ -75,6 +75,8 @@ append_session_log() {
 
 parse_handoff_status() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && grep -i "^STATUS:" "$h" | head -1 | sed 's/^STATUS: *//; s/ *$//' | tr '[:lower:]' '[:upper:]' || echo "MISSING"; }
 parse_handoff_summary() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && sed -n '/^SUMMARY:/,/^\(NEXT:\|DECISIONS_NEEDED:\|FILES_MODIFIED:\|TESTS:\|---\)/p' "$h" | head -5 | sed '1s/^SUMMARY: *//; $d' || echo "Nessun handoff"; }
+parse_handoff_phase() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && grep -i "^PHASE:" "$h" | head -1 | sed 's/^PHASE: *//; s/ *$//' || echo ""; }
+parse_handoff_block() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && grep -i "^BLOCK:" "$h" | head -1 | sed 's/^BLOCK: *//; s/ *$//' || echo ""; }
 
 check_git_branch() {
     git -C "$PROJECT_DIR" rev-parse --git-dir &>/dev/null || { log "${YELLOW}Non è un repo git${NC}"; return 0; }
@@ -160,7 +162,7 @@ main() {
     local br=0 st; st="$(date +%s)"
     log "${BOLD}=== Inizio ciclo ===${NC}\n"
     while [[ $br -lt $MAX_BLOCKS ]]; do
-        br=$((br+1)); cb=$((cb+1)); local bid="F${cp}B${cb}"
+        br=$((br+1)); local bid="F${cp}B${cb}"
         log "━━━ ${BOLD}Blocco $bid ($br/$MAX_BLOCKS)${NC} ━━━"
         check_git_branch
         local pr; pr="$(build_prompt "$cp" "$cb" "$hc" "$fb")"
@@ -168,6 +170,10 @@ main() {
             append_session_log "$bid" "FAILED" "Errore o timeout"; update_progress "$cp" "$cb" "error" "Fallito"
             send_notification "Metodo Villa" "Blocco $bid fallito"; break; fi
         local s; s="$(parse_handoff_status)"; local sm; sm="$(parse_handoff_summary)"
+        # Aggiorna fase/blocco dall'handoff (sono stringhe, non numeri)
+        local np nb; np="$(parse_handoff_phase)"; nb="$(parse_handoff_block)"
+        [[ -n "$np" ]] && cp="$np"
+        [[ -n "$nb" ]] && cb="$nb"
         log "Status: ${BOLD}$s${NC} — $sm"
         append_session_log "$bid" "$s" "$sm"; update_progress "$cp" "$cb" "$s" "$sm"
         case "$s" in
