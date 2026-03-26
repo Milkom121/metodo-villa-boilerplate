@@ -56,6 +56,10 @@ send_telegram_report() {
         FAILED) icon="💥";;
         *) icon="❓";;
     esac
+    # Costruisci prompt pronto per Dispatch
+    local project_name; project_name="$(basename "$PROJECT_DIR")"
+    local dispatch_prompt="Leggi il file .claude/handoff.md e la ${ROADMAP} nella cartella ${project_name}. Fammi il punto della situazione e dimmi cosa serve per procedere."
+
     local msg="${icon} *Metodo Villa — ${status}*
 📦 Blocco: \`${bid}\` (${blocks_run} eseguiti)
 ⏱️ Tempo: ${elapsed} min
@@ -66,7 +70,8 @@ ${summary}
 🔜 *Prossimo:*
 ${next:-Nessuna indicazione}
 
-_Apri il PC per continuare._"
+📲 *Copia su Dispatch:*
+\`${dispatch_prompt}\`"
     send_telegram "$msg"
 }
 
