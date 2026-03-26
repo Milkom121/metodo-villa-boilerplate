@@ -22,8 +22,20 @@ log() { local ts; ts="$(date '+%Y-%m-%d %H:%M:%S')"; echo -e "${CYAN}[$ts]${NC} 
 log_verbose() { $VERBOSE && log "$1" || true; }
 die() { log "${RED}ERRORE FATALE: $1${NC}"; send_notification "Metodo Villa - Errore" "$1"; exit 1; }
 
+# Telegram — configura token e chat_id per ricevere notifiche sul telefono
+# Crea un bot con @BotFather, avvialo, e inserisci i dati qui
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""
+
 send_notification() {
     $NOTIFY || return 0; echo -ne '\a'
+    # Notifica Telegram (prioritaria — arriva sul telefono)
+    if [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]]; then
+        local msg="🏗️ *Metodo Villa*%0A*$1*%0A$2"
+        curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}&text=${msg}&parse_mode=Markdown" >/dev/null 2>&1 || true
+    fi
+    # Notifiche desktop (fallback)
     if command -v notify-send &>/dev/null; then notify-send "$1" "$2" 2>/dev/null || true
     elif command -v osascript &>/dev/null; then osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
     elif command -v powershell.exe &>/dev/null; then powershell.exe -Command "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [System.Windows.Forms.MessageBox]::Show('$2','$1')" 2>/dev/null || true; fi
