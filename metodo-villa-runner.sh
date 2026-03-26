@@ -60,7 +60,8 @@ send_telegram_report() {
     local win_dir; win_dir="$(cd "$PROJECT_DIR" && pwd -W 2>/dev/null || pwd)"
     local dispatch_prompt="Leggi i file ${win_dir}\\.claude\\handoff.md e ${win_dir}\\${ROADMAP}. Fammi il punto della situazione e dimmi cosa serve per procedere."
 
-    local msg="${icon} *Metodo Villa — ${status}*
+    local project_name; project_name="$(basename "$PROJECT_DIR")"
+    local msg="${icon} *${project_name} — ${status}*
 📦 Blocco: \`${bid}\` (${blocks_run} eseguiti)
 ⏱️ Tempo: ${elapsed} min
 
