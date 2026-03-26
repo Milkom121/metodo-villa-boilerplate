@@ -56,9 +56,9 @@ send_telegram_report() {
         FAILED) icon="💥";;
         *) icon="❓";;
     esac
-    # Costruisci prompt pronto per Dispatch
-    local project_name; project_name="$(basename "$PROJECT_DIR")"
-    local dispatch_prompt="Leggi il file .claude/handoff.md e la ${ROADMAP} nella cartella ${project_name}. Fammi il punto della situazione e dimmi cosa serve per procedere."
+    # Costruisci prompt pronto per Dispatch (path Windows completo)
+    local win_dir; win_dir="$(cd "$PROJECT_DIR" && pwd -W 2>/dev/null || pwd)"
+    local dispatch_prompt="Leggi i file ${win_dir}\\.claude\\handoff.md e ${win_dir}\\${ROADMAP}. Fammi il punto della situazione e dimmi cosa serve per procedere."
 
     local msg="${icon} *Metodo Villa — ${status}*
 📦 Blocco: \`${bid}\` (${blocks_run} eseguiti)
