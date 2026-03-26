@@ -27,18 +27,47 @@ die() { log "${RED}ERRORE FATALE: $1${NC}"; send_notification "Metodo Villa - Er
 TELEGRAM_BOT_TOKEN=""
 TELEGRAM_CHAT_ID=""
 
+send_telegram() {
+    [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]] && return 0
+    local msg="$1"
+    curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" -d "text=${msg}" -d "parse_mode=Markdown" >/dev/null 2>&1 || true
+}
+
 send_notification() {
     $NOTIFY || return 0; echo -ne '\a'
-    # Notifica Telegram (prioritaria — arriva sul telefono)
-    if [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]]; then
-        local msg="🏗️ *Metodo Villa*%0A*$1*%0A$2"
-        curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}&text=${msg}&parse_mode=Markdown" >/dev/null 2>&1 || true
-    fi
-    # Notifiche desktop (fallback)
+    # Notifiche desktop (leggere, per il beep)
     if command -v notify-send &>/dev/null; then notify-send "$1" "$2" 2>/dev/null || true
     elif command -v osascript &>/dev/null; then osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
     elif command -v powershell.exe &>/dev/null; then powershell.exe -Command "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [System.Windows.Forms.MessageBox]::Show('$2','$1')" 2>/dev/null || true; fi
+}
+
+# Resoconto Telegram con dettagli — chiamato solo quando il runner si ferma
+send_telegram_report() {
+    local status="$1" bid="$2" blocks_run="$3" elapsed="$4" summary="$5" next="$6"
+    local icon
+    case "$status" in
+        CONTINUE) return 0;;  # nessuna notifica su CONTINUE — il runner prosegue da solo
+        CHECKPOINT) icon="⏸️";;
+        PHASE_COMPLETE) icon="✅";;
+        ERROR) icon="❌";;
+        BLOCKED) icon="🚧";;
+        MISSING) icon="⚠️";;
+        FAILED) icon="💥";;
+        *) icon="❓";;
+    esac
+    local msg="${icon} *Metodo Villa — ${status}*
+📦 Blocco: \`${bid}\` (${blocks_run} eseguiti)
+⏱️ Tempo: ${elapsed} min
+
+📋 *Fatto:*
+${summary}
+
+🔜 *Prossimo:*
+${next:-Nessuna indicazione}
+
+_Apri il PC per continuare._"
+    send_telegram "$msg"
 }
 
 read_file_safe() { local f="$PROJECT_DIR/$1"; [[ -f "$f" ]] && cat "$f" || echo ""; }
@@ -89,6 +118,7 @@ parse_handoff_status() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && 
 parse_handoff_summary() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && sed -n '/^SUMMARY:/,/^\(NEXT:\|DECISIONS_NEEDED:\|FILES_MODIFIED:\|TESTS:\|---\)/p' "$h" | head -5 | sed '1s/^SUMMARY: *//; $d' || echo "Nessun handoff"; }
 parse_handoff_phase() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && grep -i "^PHASE:" "$h" | head -1 | sed 's/^PHASE: *//; s/ *$//' || echo ""; }
 parse_handoff_block() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && grep -i "^BLOCK:" "$h" | head -1 | sed 's/^BLOCK: *//; s/ *$//' || echo ""; }
+parse_handoff_next() { local h="$PROJECT_DIR/$HANDOFF_FILE"; [[ -f "$h" ]] && grep -i "^NEXT:" "$h" | head -1 | sed 's/^NEXT: *//; s/ *$//' || echo ""; }
 
 check_git_branch() {
     git -C "$PROJECT_DIR" rev-parse --git-dir &>/dev/null || { log "${YELLOW}Non è un repo git${NC}"; return 0; }
@@ -179,29 +209,41 @@ main() {
         check_git_branch
         local pr; pr="$(build_prompt "$cp" "$cb" "$hc" "$fb")"
         if ! run_claude_session "$pr" "$bid"; then
+            local el_now; el_now="$(( ($(date +%s) - st) / 60 ))"
             append_session_log "$bid" "FAILED" "Errore o timeout"; update_progress "$cp" "$cb" "error" "Fallito"
-            send_notification "Metodo Villa" "Blocco $bid fallito"; break; fi
-        local s; s="$(parse_handoff_status)"; local sm; sm="$(parse_handoff_summary)"
+            send_notification "Metodo Villa" "Blocco $bid fallito"
+            send_telegram_report "FAILED" "$bid" "$br" "$el_now" "Sessione crashata o timeout" ""; break; fi
+        local s; s="$(parse_handoff_status)"; local sm; sm="$(parse_handoff_summary)"; local sn; sn="$(parse_handoff_next)"
         # Aggiorna fase/blocco dall'handoff (sono stringhe, non numeri)
         local np nb; np="$(parse_handoff_phase)"; nb="$(parse_handoff_block)"
         [[ -n "$np" ]] && cp="$np"
         [[ -n "$nb" ]] && cb="$nb"
         log "Status: ${BOLD}$s${NC} — $sm"
         append_session_log "$bid" "$s" "$sm"; update_progress "$cp" "$cb" "$s" "$sm"
+        local el_now; el_now="$(( ($(date +%s) - st) / 60 ))"
         case "$s" in
             CONTINUE) log "${GREEN}Continuo${NC}"; hc="$(cat "$PROJECT_DIR/$HANDOFF_FILE")"; fb="false";;
-            CHECKPOINT) log "${YELLOW}CHECKPOINT — decisione umana${NC}"; send_notification "Metodo Villa" "Checkpoint $bid"; break;;
-            PHASE_COMPLETE) log "${GREEN}FASE $cp COMPLETATA${NC}"; send_notification "Metodo Villa" "Fase $cp completata!"; break;;
-            ERROR) log "${RED}ERRORE $bid${NC}"; send_notification "Metodo Villa" "Errore $bid"; break;;
-            BLOCKED) log "${YELLOW}BLOCCATO${NC}"; send_notification "Metodo Villa" "Bloccato $bid"; break;;
-            MISSING) log "${RED}Handoff mancante${NC}"; send_notification "Metodo Villa" "Handoff mancante"; break;;
+            CHECKPOINT) log "${YELLOW}CHECKPOINT — decisione umana${NC}"; send_notification "Metodo Villa" "Checkpoint $bid"
+                send_telegram_report "CHECKPOINT" "$bid" "$br" "$el_now" "$sm" "$sn"; break;;
+            PHASE_COMPLETE) log "${GREEN}FASE $cp COMPLETATA${NC}"; send_notification "Metodo Villa" "Fase $cp completata!"
+                send_telegram_report "PHASE_COMPLETE" "$bid" "$br" "$el_now" "$sm" "$sn"; break;;
+            ERROR) log "${RED}ERRORE $bid${NC}"; send_notification "Metodo Villa" "Errore $bid"
+                send_telegram_report "ERROR" "$bid" "$br" "$el_now" "$sm" "$sn"; break;;
+            BLOCKED) log "${YELLOW}BLOCCATO${NC}"; send_notification "Metodo Villa" "Bloccato $bid"
+                send_telegram_report "BLOCKED" "$bid" "$br" "$el_now" "$sm" "$sn"; break;;
+            MISSING) log "${RED}Handoff mancante${NC}"; send_notification "Metodo Villa" "Handoff mancante"
+                send_telegram_report "MISSING" "$bid" "$br" "$el_now" "Handoff non trovato" ""; break;;
             *) log "${YELLOW}Status ignoto: $s${NC}"; break;;
         esac
         [[ $br -lt $MAX_BLOCKS ]] && sleep 5
     done
     local et; et="$(date +%s)"; local el=$(((et-st)/60))
     log "\n━━━ ${BOLD}RIEPILOGO${NC} ━━━\nBlocchi: $br | Tempo: ${el}min | Status: $(parse_handoff_status)"
-    [[ $br -ge $MAX_BLOCKS ]] && log "${YELLOW}Limite $MAX_BLOCKS raggiunto${NC}" && send_notification "Metodo Villa" "$MAX_BLOCKS blocchi in ${el}min"
+    if [[ $br -ge $MAX_BLOCKS ]]; then
+        log "${YELLOW}Limite $MAX_BLOCKS raggiunto${NC}"
+        send_notification "Metodo Villa" "$MAX_BLOCKS blocchi in ${el}min"
+        send_telegram_report "LIMITE RAGGIUNTO" "$bid" "$br" "$el" "Completati $MAX_BLOCKS blocchi senza problemi" "$(parse_handoff_next)"
+    fi
     echo -ne '\a'
 }
 main "$@"
